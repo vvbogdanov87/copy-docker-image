@@ -17,22 +17,23 @@ package main
 import (
 	"encoding/base64"
 	"fmt"
+	"io"
+	"io/ioutil"
+	"os"
+	"strings"
+
 	"github.com/alecthomas/kingpin"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/ecr"
 	"github.com/docker/distribution/manifest/schema1"
 	"github.com/heroku/docker-registry-client/registry"
-	"io"
-	"io/ioutil"
-	"os"
-	"strings"
 )
 
 func moveLayerUsingFile(srcHub *registry.Registry, destHub *registry.Registry, srcRepo string, destRepo string, layer schema1.FSLayer, file *os.File) error {
 	layerDigest := layer.BlobSum
 
-	srcImageReader, err := srcHub.DownloadLayer(srcRepo, layerDigest)
+	srcImageReader, err := srcHub.DownloadBlob(srcRepo, layerDigest)
 	if err != nil {
 		return fmt.Errorf("Failure while starting the download of an image layer. %v", err)
 	}
@@ -48,7 +49,7 @@ func moveLayerUsingFile(srcHub *registry.Registry, destHub *registry.Registry, s
 	if err != nil {
 		return fmt.Errorf("Failed to open temporary image layer for uploading. %v", err)
 	}
-	err = destHub.UploadLayer(destRepo, layerDigest, imageReadStream)
+	err = destHub.UploadBlob(destRepo, layerDigest, imageReadStream)
 	imageReadStream.Close()
 	if err != nil {
 		return fmt.Errorf("Failure while uploading the image. %v", err)
@@ -61,7 +62,7 @@ func migrateLayer(srcHub *registry.Registry, destHub *registry.Registry, srcRepo
 	fmt.Println("Checking if manifest layer exists in destination registery")
 
 	layerDigest := layer.BlobSum
-	hasLayer, err := destHub.HasLayer(destRepo, layerDigest)
+	hasLayer, err := destHub.HasBlob(destRepo, layerDigest)
 	if err != nil {
 		return fmt.Errorf("Failure while checking if the destination registry contained an image layer. %v", err)
 	}
@@ -91,6 +92,7 @@ type RepositoryArguments struct {
 	RegistryURL *string
 	Repository  *string
 	Tag         *string
+	Region      *string
 }
 
 func buildRegistryArguments(argPrefix string, argDescription string) RepositoryArguments {
@@ -106,10 +108,15 @@ func buildRegistryArguments(argPrefix string, argDescription string) RepositoryA
 	tagDescription := fmt.Sprintf("Name of the %s tag", argDescription)
 	tagArg := kingpin.Flag(tagName, tagDescription).String()
 
+	regionName := fmt.Sprintf("%s-region", argPrefix)
+	regionDescription := fmt.Sprintf("Name of the %s AWS region", argDescription)
+	regionArg := kingpin.Flag(regionName, regionDescription).String()
+
 	return RepositoryArguments{
 		RegistryURL: registryURLArg,
 		Repository:  repositoryArg,
 		Tag:         tagArg,
+		Region:      regionArg,
 	}
 }
 
@@ -121,8 +128,7 @@ func connectToRegistry(args RepositoryArguments) (*registry.Registry, error) {
 
 	if strings.HasPrefix(url, "ecr:") {
 		registryId := strings.TrimPrefix(url, "ecr:")
-
-		sess, err := session.NewSession()
+		sess, err := session.NewSession(&aws.Config{Region: aws.String(*args.Region)})
 		if err != nil {
 			return nil, fmt.Errorf("Failed to create new AWS SDK session. %v", err)
 		}
@@ -230,11 +236,9 @@ func main() {
 			return
 		}
 	}
-
 	err = destHub.PutManifest(*destArgs.Repository, *destArgs.Tag, manifest)
 	if err != nil {
 		fmt.Printf("Failed to upload manifest to %s/%s:%s. %v", destHub.URL, *destArgs.Repository, *destArgs.Tag, err)
 		exitCode = -1
 	}
-
 }
