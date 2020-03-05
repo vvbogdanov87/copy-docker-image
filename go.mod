@@ -8,6 +8,6 @@ require (
 	github.com/alecthomas/units v0.0.0-20190924025748-f65c72e2690d // indirect
 	github.com/aws/aws-sdk-go v1.29.16
 	github.com/docker/distribution v2.7.1+incompatible
+	github.com/google/go-containerregistry v0.0.0-20200304201134-fcc8ea80e26f // indirect
 	github.com/heroku/docker-registry-client v0.0.0-20190909225348-afc9e1acc3d5
-	github.com/opencontainers/image-spec v1.0.1 // indirect
 )

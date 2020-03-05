@@ -26,12 +26,12 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/ecr"
-	"github.com/docker/distribution/manifest/schema1"
+	"github.com/docker/distribution"
 	"github.com/heroku/docker-registry-client/registry"
 )
 
-func moveLayerUsingFile(srcHub *registry.Registry, destHub *registry.Registry, srcRepo string, destRepo string, layer schema1.FSLayer, file *os.File) error {
-	layerDigest := layer.BlobSum
+func moveLayerUsingFile(srcHub *registry.Registry, destHub *registry.Registry, srcRepo string, destRepo string, layer distribution.Descriptor, file *os.File) error {
+	layerDigest := layer.Digest
 
 	srcImageReader, err := srcHub.DownloadBlob(srcRepo, layerDigest)
 	if err != nil {
@@ -58,10 +58,10 @@ func moveLayerUsingFile(srcHub *registry.Registry, destHub *registry.Registry, s
 	return nil
 }
 
-func migrateLayer(srcHub *registry.Registry, destHub *registry.Registry, srcRepo string, destRepo string, layer schema1.FSLayer) error {
+func migrateLayer(srcHub *registry.Registry, destHub *registry.Registry, srcRepo string, destRepo string, layer distribution.Descriptor) error {
 	fmt.Println("Checking if manifest layer exists in destination registery")
 
-	layerDigest := layer.BlobSum
+	layerDigest := layer.Digest
 	hasLayer, err := destHub.HasBlob(destRepo, layerDigest)
 	if err != nil {
 		return fmt.Errorf("Failure while checking if the destination registry contained an image layer. %v", err)
@@ -161,11 +161,6 @@ func connectToRegistry(args RepositoryArguments) (*registry.Registry, error) {
 		return nil, fmt.Errorf("Failed to create registry connection for %s. %v", origUrl, err)
 	}
 
-	err = registry.Ping()
-	if err != nil {
-		return nil, fmt.Errorf("Failed to ping registry %s as a connection test. %v", origUrl, err)
-	}
-
 	return registry, nil
 }
 
@@ -221,14 +216,21 @@ func main() {
 		return
 	}
 
-	manifest, err := srcHub.Manifest(*srcArgs.Repository, *srcArgs.Tag)
+	manifest, err := srcHub.ManifestV2(*srcArgs.Repository, *srcArgs.Tag)
 	if err != nil {
 		fmt.Printf("Failed to fetch the manifest for %s/%s:%s. %v", srcHub.URL, *srcArgs.Repository, *srcArgs.Tag, err)
 		exitCode = -1
 		return
 	}
 
-	for _, layer := range manifest.FSLayers {
+	err = migrateLayer(srcHub, destHub, *srcArgs.Repository, *destArgs.Repository, manifest.Target())
+	if err != nil {
+		fmt.Printf("Failed to migrate image layer. %v", err)
+		exitCode = -1
+		return
+	}
+
+	for _, layer := range manifest.Layers {
 		err := migrateLayer(srcHub, destHub, *srcArgs.Repository, *destArgs.Repository, layer)
 		if err != nil {
 			fmt.Printf("Failed to migrate image layer. %v", err)
@@ -236,6 +238,7 @@ func main() {
 			return
 		}
 	}
+
 	err = destHub.PutManifest(*destArgs.Repository, *destArgs.Tag, manifest)
 	if err != nil {
 		fmt.Printf("Failed to upload manifest to %s/%s:%s. %v", destHub.URL, *destArgs.Repository, *destArgs.Tag, err)
